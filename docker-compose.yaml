@@ -1,0 +1,18 @@
+version: '3'
+services:
+  ninemanga:
+    build:
+      context: .
+    container_name: ninemanga.app
+    volumes:
+      # Here we mount in our codebase so any changes are immediately reflected into the container
+      - '.:/python-docker'
+    networks:
+      - ninemanga
+    profiles:
+      - main
+    entrypoint: /bin/sh
+    tty: true
+
+networks:
+  ninemanga:

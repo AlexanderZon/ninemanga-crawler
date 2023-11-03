@@ -1,0 +1,7 @@
+flask
+requests
+html2text
+typer
+rich
+reportlab
+Pillow
