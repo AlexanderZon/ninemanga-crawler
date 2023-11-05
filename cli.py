@@ -13,10 +13,24 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 from PIL import Image
 
-domain = "ninemanga.com"
-subdomain = "www"
 data_path = ".data"
 data_json_file = "data.json"
+
+config_map = {
+    "en": {
+        "domain": "ninemanga.com",
+        "subdomain": "www",
+    },
+    "es": {
+        "domain": "ninemanga.com",
+        "subdomain": "es",
+    },
+    "pt": {
+        "domain": "ninemanga.com",
+        "subdomain": "br",
+    },
+}
+language = "en"
 
 def createFolder(path):
     if not os.path.exists(path):
@@ -45,19 +59,24 @@ def cleanHtml(html):
     text = text.replace('_', '')
     return text
 
+def getEntireDomain():
+    return f"https://{config_map[language]['subdomain']}.{config_map[language]['domain']}"
+
 def getEndpointPageContent(endpoint):
-    url = f"https://{subdomain}.{domain}{endpoint}"
+    url = f"{getEntireDomain()}{endpoint}"
     response = getUriContent(url)
     content = response.content.decode('utf-8')
     return content.replace('\n', '')
 
 def removeDomain(url):
-    return url.replace(f"https://{subdomain}.{domain}", '')
+    return url.replace(f"{getEntireDomain()}", '')
 
-def search(str):
-    endpoint = f"/search/ajax/?term={str}"
+def search():
+    manga_name = typer.prompt("Enter manga name to search")
+    typer.secho(f"Searching: {manga_name}", fg=typer.colors.YELLOW, bg=typer.colors.BLACK)
+    endpoint = f"/search/ajax/?term={manga_name}"
     content = getEndpointPageContent(endpoint)
-    return json.loads(content)
+    return list([manga_name, json.loads(content)])
 
 def select(list):
     typer.secho(f"Results:", fg=typer.colors.YELLOW, bg=typer.colors.BLACK)
@@ -104,20 +123,22 @@ def getChaptersInfo(manga, list_content):
 
 def getChaptersList(manga):
     list_content = requestChaptersList(f"/manga/{manga["endpoint"]}.html")
+    chapters = []
     if(len(list_content) > 0):
-        return getChaptersInfo(manga, list_content)
-    return []
+        chapters = getChaptersInfo(manga, list_content)
+    manga["chapters"] = chapters
+    return manga
 
-
-def getChaptersContent(chapters):
-    for i in track(range(len(chapters)), description="Listing Chapters..."):
-        if(len(chapters[i]["pages"]) == 0):
-            print(f"   [{i+1}/{len(chapters)}] Listing {chapters[i]['name']} chapter content. 🕘")
-            pages = getChapterContent(chapters[i])
-            chapters[i]["pages"] = pages
+def getChaptersContent(manga):
+    for i in track(range(len(manga["chapters"])), description="Listing Chapters..."):
+        if(len(manga["chapters"][i]["pages"]) == 0):
+            print(f"   [{i+1}/{len(manga['chapters'])}] Listing {manga['chapters'][i]['name']} chapter content. 📥")
+            pages = getChapterContent(manga["chapters"][i])
+            manga["chapters"][i]["pages"] = pages
         else:
-            print(f"   [{i+1}/{len(chapters)}] {chapters[i]['name']} chapter content already cached! ✅")
-    return chapters
+            print(f"   [{i+1}/{len(manga["chapters"])}] {manga["chapters"][i]['name']} chapter content already cached! ✅")
+        writeMangaDataFile(manga)
+    return manga
 
 def getChapterContent(chapter):
     content = getEndpointPageContent(chapter['endpoint'])
@@ -132,20 +153,25 @@ def getChapterContent(chapter):
     return chapter_pages
 
 def getMangaPath(manga):
-    createFolder(data_path)
-    manga_path = f"{data_path}/{manga["name"]}"
+    if not os.path.isdir(data_path):
+        createFolder(data_path)
+    if not os.path.isdir(f"{data_path}/{language}"):
+        createFolder(f"{data_path}/{language}")
+    manga_path = f"{data_path}/{language}/{manga['name']}"
     createFolder(manga_path)
     return manga_path
 
-def getMangaDataFilePath(path):
+def getMangaDataFilePath(manga):
+    path = getMangaPath(manga)
     return f"{path}/{data_json_file}"
 
-def writeMangaDataFile(path, manga):
-    with open(getMangaDataFilePath(path), 'w') as fp:
+def writeMangaDataFile(manga):
+    manga["last_update"] = str(datetime.now())
+    with open(getMangaDataFilePath(manga), 'w') as fp:
         json.dump(manga, fp)
 
-def readMangaDataFile(path):
-    with open(getMangaDataFilePath(path), 'r') as fp:
+def readMangaDataFile(manga):
+    with open(getMangaDataFilePath(manga), 'r') as fp:
         return json.load(fp)
 
 def numberWithPrefixes(number, total):
@@ -213,26 +239,38 @@ def downloadManga(manga):
             # Writes a PDF file with all content of the directory
             writePDF(folder_path)
 
-def syncChaptersListWithCache(manga_path, chapters):
+def syncChaptersListWithCache(manga):
     data = {"chapters": []}
-    if os.path.isfile(getMangaDataFilePath(manga_path)):
-        data = readMangaDataFile(manga_path)
+    if os.path.isfile(getMangaDataFilePath(manga)):
+        data = readMangaDataFile(manga)
 
-    for i in range(len(chapters)):
+    for i in range(len(manga["chapters"])):
         try:
-            item = next(item for item in data["chapters"] if item["name"] == chapters[i]["name"])
-            chapters[i]["pages"] = item["pages"]
+            item = next(item for item in data["chapters"] if item["name"] == manga["chapters"][i]["name"])
+            manga["chapters"][i]["pages"] = item["pages"]
         except StopIteration:
-            chapters[i]["pages"] = []
-    return chapters
+            manga["chapters"][i]["pages"] = []
+
+    writeMangaDataFile(manga)
+
+    # Get server manga content
+    manga = getChaptersContent(manga)
+    return manga
+
+def selectLanguage():
+    globals()["language"] = typer.prompt("Select the language [en/es/pt]")
+    if(language != "en" and language != "es" and language != "pt"):
+        typer.secho(f"Language {language} not suported!", fg=typer.colors.RED, bg=typer.colors.BLACK)
+        exit()
         
 def main():
     typer.secho(f"Nine Manga Crawler!", fg=typer.colors.WHITE, bg=typer.colors.BLUE)
 
+    # Select the manga language
+    selectLanguage()
+
     # Search manga by text
-    manga_name = typer.prompt("Enter manga name to search")
-    typer.secho(f"Searching: {manga_name}", fg=typer.colors.YELLOW, bg=typer.colors.BLACK)
-    results = search(manga_name)
+    manga_name, results = search()
 
     # If serach got results
     if(len(results) > 0):
@@ -240,22 +278,15 @@ def main():
         # Select one maga from list
         manga = select(results)
 
-        # Set manga content path
-        manga_path = getMangaPath(manga)
-
         # Get server manga list
-        chapters = getChaptersList(manga)
+        manga = getChaptersList(manga)
 
         # Compare saved chapters list with online chapters list
-        chapters = syncChaptersListWithCache(manga_path, chapters)
-
-        # Get server manga content
-        chapters = getChaptersContent(chapters)
-        manga["chapters"] = chapters
+        manga = syncChaptersListWithCache(manga)
 
         # Save/Update manga cache data
         manga["last_update"] = str(datetime.now())
-        writeMangaDataFile(manga_path, manga)
+        writeMangaDataFile(manga)
 
         # Download manga content
         downloadManga(manga)
