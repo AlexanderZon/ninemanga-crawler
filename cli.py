@@ -6,6 +6,7 @@ import re
 import os
 from datetime import datetime
 import time
+import html2text
 
 from reportlab.lib.pagesizes import letter, landscape, portrait
 from reportlab.pdfgen import canvas
@@ -15,6 +16,7 @@ from PIL import Image
 domain = "ninemanga.com"
 subdomain = "www"
 data_path = ".data"
+data_json_file = "data.json"
 
 def createFolder(path):
     if not os.path.exists(path):
@@ -34,6 +36,14 @@ def getUriContent(url):
         print(e)
         time.sleep(5)
         return getUriContent(url)
+
+def cleanHtml(html):
+    text = html2text.html2text(html)
+    text = text.replace('\n', '')
+    text = text.replace('*', '')
+    text = text.replace('#', '')
+    text = text.replace('_', '')
+    return text
 
 def getEndpointPageContent(endpoint):
     url = f"https://{subdomain}.{domain}{endpoint}"
@@ -65,25 +75,22 @@ def getChapterInfo(content):
     date = results[0]
     return {"name": name, "endpoint": endpoint, "date": date, "pages": []}
 
-# def getChapterPagesList(content):
-#     links = re.findall(r'<a href="(.+?)" target="_blank">1</a><a href="(.+?)" target="_blank">3</a><a shref="(.+?)" target="_blank">6</a><a href="(.+?)" target="_blank">10</a>', content)
-#     print(links)
-#     if(len(links) == 0):
-#         links = re.findall(r'<a href="(.+?)" target="_blank">1</a><a href="(.+?)" target="_blank">3</a><a shref="(.+?)" target="_blank">6</a>', content)
-#     if(len(links) == 0):
-#         links = re.findall(r'<a href="(.+?)" target="_blank">1</a><a href="(.+?)" target="_blank">3</a>', content)
-#     if(len(links) == 0):
-#         links = re.findall(r'<a href="(.+?)" target="_blank">1</a>', content)
+def describeChaptersList(content):
+    return re.findall(r'<ul class="sub_vol_ul" id="(.+?)">(.+?)</ul>', content)
 
-#     return links[len(links)-1]
+def requestChaptersList(endpoint):
+    content = getEndpointPageContent(endpoint)
+    list_content = describeChaptersList(content)
+    if(len(list_content) == 0):
+        warning_message = re.findall(r'<div class="warning">(.+?)</div>', content) 
+        if(len(warning_message) > 0):
+            print(cleanHtml(warning_message[0]))
+            is_continuing = typer.prompt("Do you want to continue? [y/n]")
+            if(is_continuing == 'y'):
+                return requestChaptersList(f"{endpoint}?waring=1")
+    return list_content
 
-# def getChapterName(content):
-#     results = re.findall(r'<a class="chapter_list_a" href="(.+?)" title="(.+?)">(.+?)</a>', content)
-#     return results[0][2]
-
-def getChaptersList(manga):
-    content = getEndpointPageContent(f"/manga/{manga["endpoint"]}.html")
-    list_content = re.findall(r'<ul class="sub_vol_ul" id="(.+?)">(.+?)</ul>', content) 
+def getChaptersInfo(manga, list_content):
     print(f"{manga["name"]} has {len(list_content)} lists")
     chapters = []
     for i in range(len(list_content)):
@@ -95,11 +102,21 @@ def getChaptersList(manga):
     chapters.reverse()
     return chapters
 
+def getChaptersList(manga):
+    list_content = requestChaptersList(f"/manga/{manga["endpoint"]}.html")
+    if(len(list_content) > 0):
+        return getChaptersInfo(manga, list_content)
+    return []
+
+
 def getChaptersContent(chapters):
     for i in track(range(len(chapters)), description="Listing Chapters..."):
-        print(f"   [{i+1}/{len(chapters)}] Listing {chapters[i]['name']} chapter content")
-        pages = getChapterContent(chapters[i])
-        chapters[i]["pages"] = pages
+        if(len(chapters[i]["pages"]) == 0):
+            print(f"   [{i+1}/{len(chapters)}] Listing {chapters[i]['name']} chapter content. 🕘")
+            pages = getChapterContent(chapters[i])
+            chapters[i]["pages"] = pages
+        else:
+            print(f"   [{i+1}/{len(chapters)}] {chapters[i]['name']} chapter content already cached! ✅")
     return chapters
 
 def getChapterContent(chapter):
@@ -120,23 +137,33 @@ def getMangaPath(manga):
     createFolder(manga_path)
     return manga_path
 
+def getMangaDataFilePath(path):
+    return f"{path}/{data_json_file}"
+
 def writeMangaDataFile(path, manga):
-    with open(f"{path}/data.json", 'w') as fp:
+    with open(getMangaDataFilePath(path), 'w') as fp:
         json.dump(manga, fp)
+
+def readMangaDataFile(path):
+    with open(getMangaDataFilePath(path), 'r') as fp:
+        return json.load(fp)
 
 def numberWithPrefixes(number, total):
     return str(number).rjust(len(str(total)), '0')
 
-def writePDF(image_folder):
+def getChapterPDFFilename(folder_name):
+    return f"{folder_name}.pdf"
+
+def writePDF(folder_name):
     # Get list of images in the folder
-    images = [f for f in os.listdir(image_folder) if f.endswith('.jpg') or f.endswith('.png') or f.endswith('.webp')]
+    images = [f for f in os.listdir(folder_name) if f.endswith('.jpg') or f.endswith('.png') or f.endswith('.webp')]
 
     # Create a new canvas object
-    c = canvas.Canvas(f"{image_folder}.pdf")
+    c = canvas.Canvas(getChapterPDFFilename(folder_name))
 
     for image_file in images:
         # Open image file
-        img = Image.open(os.path.join(image_folder, image_file))
+        img = Image.open(os.path.join(folder_name, image_file))
         # Get image dimensions
         width, height = img.size
 
@@ -144,7 +171,7 @@ def writePDF(image_folder):
         c.setPageSize((width, height))
 
         # Draw image on canvas at full size
-        c.drawImage(os.path.join(image_folder, image_file), 0, 0, width=width, height=height)
+        c.drawImage(os.path.join(folder_name, image_file), 0, 0, width=width, height=height)
 
         # Move to next page
         c.showPage()
@@ -156,32 +183,83 @@ def downloadManga(manga):
     for i in range(len(manga["chapters"])):
         manga_path = getMangaPath(manga)
         folder_path = f"{manga_path}/{numberWithPrefixes(i+1, len(manga["chapters"]))} - {manga["chapters"][i]["name"]}"
-        createFolder(folder_path)
-        typer.secho(f"Downloading Chapter: {manga["chapters"][i]["name"]}", fg=typer.colors.GREEN, bg=typer.colors.BLACK)
-        for j in track(range(len(manga["chapters"][i]["pages"]))):
-            content = getEndpointPageContent(manga["chapters"][i]["pages"][j]["endpoint"])
-            page_url = re.findall(r'<img class="manga_pic manga_pic_1" id="manga_pic_1" i="1" e="1" src="(.+?)" border="0" />', content)
-            image_response = getUriContent(page_url[0])
-            fp = open(f"{folder_path}/{numberWithPrefixes(j, len(manga["chapters"][i]["pages"]))}.webp", 'wb')
-            fp.write(image_response.content)
-            fp.close()
-        writePDF(folder_path)
 
+        files_counter = 0
+
+        # Verify if directory of manga chapter exists
+        if os.path.isdir(folder_path):
+            # Get the list of files existing on that directory
+            files = os.listdir(folder_path)
+            
+            # Counts list of files existing
+            files_counter = len(files)
+        else:
+
+            # Creates the manga chapter folder to download the pages images
+            createFolder(folder_path)
+
+        # If some pages of chapter is missing download the entire chapter again
+        if(files_counter != len(manga["chapters"][i]["pages"])):
+            typer.secho(f"Downloading Chapter: {manga["chapters"][i]["name"]}", fg=typer.colors.GREEN, bg=typer.colors.BLACK)
+            for j in track(range(len(manga["chapters"][i]["pages"]))):
+                content = getEndpointPageContent(manga["chapters"][i]["pages"][j]["endpoint"])
+                page_url = re.findall(r'<img class="manga_pic manga_pic_1" id="manga_pic_1" i="1" e="1" src="(.+?)" border="0" />', content)
+                image_response = getUriContent(page_url[0])
+                fp = open(f"{folder_path}/{numberWithPrefixes(j, len(manga["chapters"][i]["pages"]))}.webp", 'wb')
+                fp.write(image_response.content)
+                fp.close()
+
+        if not os.path.isfile(getChapterPDFFilename(folder_path)):
+            # Writes a PDF file with all content of the directory
+            writePDF(folder_path)
+
+def syncChaptersListWithCache(manga_path, chapters):
+    data = {"chapters": []}
+    if os.path.isfile(getMangaDataFilePath(manga_path)):
+        data = readMangaDataFile(manga_path)
+
+    for i in range(len(chapters)):
+        try:
+            item = next(item for item in data["chapters"] if item["name"] == chapters[i]["name"])
+            chapters[i]["pages"] = item["pages"]
+        except StopIteration:
+            chapters[i]["pages"] = []
+    return chapters
         
 def main():
     typer.secho(f"Nine Manga Crawler!", fg=typer.colors.WHITE, bg=typer.colors.BLUE)
+
+    # Search manga by text
     manga_name = typer.prompt("Enter manga name to search")
     typer.secho(f"Searching: {manga_name}", fg=typer.colors.YELLOW, bg=typer.colors.BLACK)
     results = search(manga_name)
+
+    # If serach got results
     if(len(results) > 0):
+
+        # Select one maga from list
         manga = select(results)
+
+        # Set manga content path
         manga_path = getMangaPath(manga)
+
+        # Get server manga list
         chapters = getChaptersList(manga)
+
+        # Compare saved chapters list with online chapters list
+        chapters = syncChaptersListWithCache(manga_path, chapters)
+
+        # Get server manga content
         chapters = getChaptersContent(chapters)
         manga["chapters"] = chapters
+
+        # Save/Update manga cache data
         manga["last_update"] = str(datetime.now())
         writeMangaDataFile(manga_path, manga)
+
+        # Download manga content
         downloadManga(manga)
+
         typer.secho(f"Download Finished!", fg=typer.colors.WHITE, bg=typer.colors.GREEN)
     else :
         typer.secho(f"No results for: {manga_name}", fg=typer.colors.RED, bg=typer.colors.BLACK)
