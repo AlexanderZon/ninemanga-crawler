@@ -9,9 +9,9 @@ services:
       - '.:/python-docker'
     networks:
       - ninemanga
-    profiles:
-      - main
-    entrypoint: /bin/sh
+    entrypoint: python cli.py
+    # entrypoint: /bin/sh
+    stdin_open: true
     tty: true
 
 networks:
