@@ -5,3 +5,4 @@ typer
 rich
 reportlab
 Pillow
+chardet

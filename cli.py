@@ -7,6 +7,8 @@ import os
 from datetime import datetime
 import time
 import html2text
+import chardet
+
 
 from reportlab.lib.pagesizes import letter, landscape, portrait
 from reportlab.pdfgen import canvas
@@ -62,10 +64,29 @@ def cleanHtml(html):
 def getEntireDomain():
     return f"https://{config_map[language]['subdomain']}.{config_map[language]['domain']}"
 
+def convert_string_from_utf_8(s):
+    return s.decode('utf-8')
+def convert_string_from_ascii(s):
+    return s.decode('ascii')
+def convert_string_from_macroman(s):
+    return s.decode('macroman')
+def decodeString(s):
+    result = chardet.detect(s)
+    if(result['encoding'] == "MacRoman"): 
+        s = convert_string_from_macroman(s)
+    elif(result['encoding'] == "ascii"): 
+        s = convert_string_from_ascii(s)
+    elif(result['encoding'] == "utf-8"): 
+        s = convert_string_from_utf_8(s)
+    else:
+        print(result['encoding'])
+        exit()
+    return s
+
 def getEndpointPageContent(endpoint):
     url = f"{getEntireDomain()}{endpoint}"
     response = getUriContent(url)
-    content = response.content.decode('utf-8')
+    content = decodeString(response.content)
     return content.replace('\n', '')
 
 def removeDomain(url):
