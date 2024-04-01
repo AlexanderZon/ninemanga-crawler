@@ -92,12 +92,32 @@ def getEndpointPageContent(endpoint):
 def removeDomain(url):
     return url.replace(f"{getEntireDomain()}", '')
 
+def parseBadResults(content):
+    values = content[2:-2]
+    values = values.split('],[')
+
+    results = []
+    for value in values:
+        value = value[1:-1].split('","')
+        result = []
+        for item in value:
+            item = item.replace('"', '\'')
+            result.append(item)
+        results.append(result)
+    return results
+
 def search():
     manga_name = typer.prompt("Enter manga name to search")
     typer.secho(f"Searching: {manga_name}", fg=typer.colors.YELLOW, bg=typer.colors.BLACK)
     endpoint = f"/search/ajax/?term={manga_name}"
     content = getEndpointPageContent(endpoint)
-    return list([manga_name, json.loads(content)])
+    
+    try:
+        results = list([manga_name, json.loads(content)])
+    except:
+        results = list([manga_name, parseBadResults(content)])
+        
+    return results
 
 def select(list):
     typer.secho(f"Results:", fg=typer.colors.YELLOW, bg=typer.colors.BLACK)
